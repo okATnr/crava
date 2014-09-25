@@ -286,6 +286,12 @@ int main(int argc, char** argv)
         errTxt += "Warning Gravimetric under construction\n";
         break;
 
+     case TimeLine::GRAVITYFIRST :
+        failedFirst = computeGravityAdjustments(modelGeneral,modelGravityStatic);
+
+        errTxt += "Warning Gravimetric under construction\n";
+        break;
+
       default :
         errTxt += "Error: Unknown inverstion type.\n";
         break;
@@ -308,7 +314,7 @@ int main(int argc, char** argv)
                                   seismicParameters,
                                   modelSettings);
 
-        bool failed;
+        bool failed=false;
 
         switch(eventType) {
 
@@ -337,7 +343,14 @@ int main(int argc, char** argv)
                                                    inputFiles,
                                                    vintage,
                                                    seismicParameters);
+          errTxt += "Warning Gravimetric under construction\n";
           break;
+
+        case TimeLine::GRAVITYFIRST :
+          failedFirst = computeGravityAdjustments(modelGeneral,modelGravityStatic);
+
+        errTxt += "Warning Gravimetric under construction\n";
+        break;
 
         default :
           failed = true;
