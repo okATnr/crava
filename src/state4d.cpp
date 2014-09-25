@@ -787,13 +787,13 @@ void    State4D::updateWithSingleParameter(FFTGrid  *Epost, FFTGrid *CovPost, in
    // At input it is in the new time frame Vp_Current(t_current)/Vp_Initial(t_current);
    // We have:  dt_current =  (Vp_Current / Vp_prev) *dt_prev
    //
-   int nx=new_vp_relative_to_base->getNx();
-   int ny=new_vp_relative_to_base->getNy();
-   int nz=new_vp_relative_to_base->getNz();
+   int nxp=new_vp_relative_to_base->getNxp();
+   int nyp=new_vp_relative_to_base->getNyp();
+   int nzp=new_vp_relative_to_base->getNzp();
 
-   for(int i=0;i<nx;i++)
-     for(int j=0;j<ny;j++)
-       for(int k=0;k<nz;k++)
+   for(int i=0;i<nxp;i++)
+     for(int j=0;j<nyp;j++)
+       for(int k=0;k<nzp;k++)
          velocity_relative_to_base_->setRealValue(i,j,k,new_vp_relative_to_base->getRealValue(i,j,k));
  }
 
