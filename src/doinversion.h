@@ -51,6 +51,8 @@ bool doTimeLapseGravimetricInversion(ModelSettings           * modelSettings,
                                      InputFiles              * inputFiles,
                                      int                     & vintage,
                                      SeismicParametersHolder & seismicParameters);
+bool computeGravityAdjustments(  ModelGeneral             * modelGeneral,
+                                 ModelGravityStatic      * modelGravityStatic);
 
 #endif
 

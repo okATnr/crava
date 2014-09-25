@@ -118,17 +118,18 @@ bool doTimeLapseAVOInversion(ModelSettings           * modelSettings,
   if(failedLoadingModel == false) {
     Crava * crava = new Crava(modelSettings, modelGeneral, modelAVOstatic, modelAVOdynamic, seismicParameters);
 
+    modelAVOstatic->deleteDynamicWells(modelGeneral->getWells(),modelSettings->getNumberOfWells());
+
+    delete modelAVOdynamic;
+    if(modelSettings->getDebugLevel()>0)
+      modelGeneral->dumpSeismicParameters(const_cast<ModelSettings*>(modelSettings),"_AfterAVO",vintage ,  seismicParameters);
+    modelGeneral->updateState4D(seismicParameters);
+    if(modelSettings->getDebugLevel()>0)
+      modelGeneral->dump4Dparameters(const_cast<ModelSettings*>(modelSettings),"_AfterAVO",vintage ,  true);
+
     delete crava;
   }
 
-  modelAVOstatic->deleteDynamicWells(modelGeneral->getWells(),modelSettings->getNumberOfWells());
-
-  delete modelAVOdynamic;
-  if(modelSettings->getDebugLevel()>0)
-    modelGeneral->dumpSeismicParameters(const_cast<ModelSettings*>(modelSettings),"_AfterAVO",vintage ,  seismicParameters);
-  modelGeneral->updateState4D(seismicParameters);
-  if(modelSettings->getDebugLevel()>0)
-    modelGeneral->dump4Dparameters(const_cast<ModelSettings*>(modelSettings),"_AfterAVO",vintage ,  true);
   return(failedLoadingModel);
 }
 
@@ -164,6 +165,14 @@ doTimeLapseTravelTimeInversion(const ModelSettings     * modelSettings,
   return(failedLoadingModel);
 }
 
+bool computeGravityAdjustments(  ModelGeneral            * modelGeneral,
+                                 ModelGravityStatic      * modelGravityStatic)
+{
+  modelGravityStatic->computeBaseAdjustments(modelGeneral);
+  return false;
+}
+
+
 bool
 doTimeLapseGravimetricInversion(ModelSettings           * modelSettings,
                                 ModelGeneral            * modelGeneral,
@@ -178,19 +187,20 @@ doTimeLapseGravimetricInversion(ModelSettings           * modelSettings,
                                                 modelGeneral,
                                                 modelGravityStatic,
                                                 inputFiles,
-                                                vintage,
-                                                seismicParameters);
+                                                vintage);
 
   bool failedLoadingModel = modelGravityDynamic == NULL || modelGravityDynamic->GetFailed();
 
    if(failedLoadingModel == false) {
-
-    GravimetricInversion * gravimetricInversion = new GravimetricInversion(modelGeneral,
+     if(modelSettings->getDebugLevel()>1)
+       modelGeneral->dump4Dparameters(const_cast<ModelSettings*>(modelSettings),"_BeforeGravimetric",vintage ,  true);
+     GravimetricInversion * gravimetricInversion = new GravimetricInversion(modelGeneral,
                                                                            modelGravityStatic,
                                                                            modelGravityDynamic,
                                                                            seismicParameters);
-
-    delete gravimetricInversion;
+     if(modelSettings->getDebugLevel()>0)
+       modelGeneral->dump4Dparameters(const_cast<ModelSettings*>(modelSettings),"_AfterGravimetric",vintage ,  true);
+     delete gravimetricInversion;
   }
 
   delete modelGravityDynamic;
