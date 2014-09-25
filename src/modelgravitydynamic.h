@@ -26,18 +26,18 @@ public:
                       const ModelGeneral           * modelGeneral,
                       ModelGravityStatic           * modelGravityStatic,
                       const InputFiles             * inputFiles,
-                      int                            t,
-                      SeismicParametersHolder      & seismicParameters);
+                      int                            t);
 
   ~ModelGravityDynamic();
 
   bool                          GetFailed()                const { return failed_                 ;}
   std::vector<bool>             GetFailedDetails()         const { return failed_details_         ;}
-
+  int                           GetNData()                 const { return static_cast<int>(gravity_response_.size());}
   std::vector<float>            GetGravityResponse()       const { return gravity_response_       ;}
   std::vector<float>            GetGravityStdDev()         const { return gravity_std_dev_        ;}
   NRLib::Matrix                 GetGMatrix()               const { return G_                      ;}
   NRLib::Matrix                 GetGMatrixFullSize()       const { return G_fullsize_             ;}
+  NRLib::Vector                 GetSyntheticData()         const { return synthetic_data_         ;}
 
   void                          SetSyntheticData(NRLib::Vector data) { synthetic_data_ = data     ;}
 
@@ -60,6 +60,6 @@ private:
 
   const ModelGeneral * modelGeneral_;
 
-  void BuildGMatrix(ModelGravityStatic      * modelGravityStatic, SeismicParametersHolder & seismicParameters);
+  void BuildGMatrix(ModelGravityStatic      * modelGravityStatic);
 };
 #endif

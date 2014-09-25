@@ -39,6 +39,7 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   TimeKit::getTime(wall,cpu);
 
   State4D * state4d = modelGeneral->getState4D();
+
   lag_index_              = modelGravityStatic->GetLagIndex();
 
   int nxp               = state4d->getMuVpStatic()->getNxp();
@@ -55,8 +56,9 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   int Np_up             = nxp_upscaled*nyp_upscaled*nzp_upscaled;
 
   bool   include_level_shift = true;
-  double shift_parameter    = 0;
-  double level_shift        = 0;
+  double shift_variance    = 0.0; // Initialization, value computed below
+  double level_shift        = 0.0;
+  int    nObs               = modelGravityDynamic->GetNData();
 
 
   FFTGrid * upscaling_kernel_conj = new FFTGrid(modelGravityStatic->GetUpscalingKernel());
@@ -66,14 +68,14 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   upscaling_kernel_conj->conjugate();  // Conjugate only in FFT domain.
 
   FFTGrid * upscaling_kernel_abs = new FFTGrid(modelGravityStatic->GetUpscalingKernel());
-  upscaling_kernel_abs->realAbs();
+  upscaling_kernel_abs->abs();
 
   // Find distribution of rho_current
   FFTGrid * mean_rho_current  = new FFTGrid(seismicParameters.GetMuRho());    // At this stage we are on log scale, \mu_{log rho^c}
   FFTGrid * cov_rho_current   = new FFTGrid(seismicParameters.GetCovRho());   // at this stage: on log scale
 
-  float sigma_squared = GetSigmaForTransformation(cov_rho_current);
-  float mean_current  = GetMeanForTransformation (mean_rho_current);
+  float log_sigma_squared_current = GetSigmaForTransformation(cov_rho_current);
+  //float log_mean_current  = GetMeanForTransformation (mean_rho_current);
 
   //Need to be in real domain from transforming from log domain
   if(mean_rho_current->getIsTransformed())
@@ -81,25 +83,27 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   if(cov_rho_current->getIsTransformed())
     cov_rho_current->invFFTInPlace();
 
-  MeanExpTransform(mean_rho_current, sigma_squared);
-  CovExpTransform (cov_rho_current,  mean_current);
+  MeanExpTransform(mean_rho_current, log_sigma_squared_current);
+  float exp_mean_current =GetMeanForTransformation(mean_rho_current);
+  CovExpTransform (cov_rho_current,  exp_mean_current);
 
   // Compute joint distributions of [mc, ms] = exp([rho_current_log, rho_static_log])
   FFTGrid * mean_rho_static = new FFTGrid(state4d->getMuRhoStatic());
   FFTGrid * cov_rho_static  = new FFTGrid(state4d->getCovRhoRhoStaticStatic());
 
-  sigma_squared      = GetSigmaForTransformation(cov_rho_static);
-  float mean_static  = GetMeanForTransformation(mean_rho_static);
+  float log_sigma_squared_static      = GetSigmaForTransformation(cov_rho_static);
+ // float log_mean_static  = GetMeanForTransformation(mean_rho_static);
 
   //Need to be in real domain from transforming from log domain
   if(mean_rho_static->getIsTransformed())
     mean_rho_static->invFFTInPlace();
-
   if(cov_rho_static->getIsTransformed())
     cov_rho_static->invFFTInPlace();
 
-  MeanExpTransform(mean_rho_static, sigma_squared);
-  CovExpTransform (cov_rho_static,  mean_static);
+  MeanExpTransform(mean_rho_static, log_sigma_squared_static);
+  float exp_mean_static =GetMeanForTransformation(mean_rho_static);
+  CovExpTransform (cov_rho_static,  exp_mean_static);
+
 
   // Cov of exp(rho_static_current_log) cov current = cov static static + cov static dynamic
   FFTGrid * cov_rhorho_static_current = new FFTGrid(state4d->getCovRhoRhoStaticStatic());
@@ -112,73 +116,79 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
     cov_rhorho_static_dynamic->invFFTInPlace();
 
   cov_rhorho_static_current->add(cov_rhorho_static_dynamic);
-  CrCovExpTransform(cov_rhorho_static_current, mean_static, mean_current);
+  CrCovExpTransform(cov_rhorho_static_current, exp_mean_static, exp_mean_current);
 
   // Mean of new parameter
   if(mean_rho_current->getIsTransformed())
     mean_rho_current->invFFTInPlace();
 
+
+
+
   if(mean_rho_static->getIsTransformed())
     mean_rho_static->invFFTInPlace();
 
-  FFTGrid * mean_rho_total = new FFTGrid(mean_rho_current);
-  mean_rho_total->subtract(mean_rho_static);
+  FFTGrid * mean_rho_change = new FFTGrid(mean_rho_current);
+  mean_rho_change->subtract(mean_rho_static);
 
-  // Covariance of new parameter
-  FFTGrid * cov_rho_total = new FFTGrid(cov_rho_static);
-  cov_rho_total->add(cov_rho_current);
-  cov_rho_total->subtract(cov_rhorho_static_current);
+  ComputeSyntheticGravimetry(mean_rho_change, modelGravityDynamic, 0.0);
 
-  cov_rho_total            ->setAccessMode(FFTGrid::READANDWRITE);
+  // Covariance of new parameter stepwise computation: Cov_Change = cov_SS + cov_CC- covSC- covCS
+  FFTGrid * cov_rho_change = new FFTGrid(cov_rho_static); // Cov_Ch = cov_SS
+  cov_rho_change->add(cov_rho_current);// Cov_Ch = cov_SS + cov_CC
+  cov_rho_change->subtract(cov_rhorho_static_current);// Cov_Ch = cov_SS + cov_CC- covSC
+
+  cov_rho_change            ->setAccessMode(FFTGrid::READANDWRITE);
   cov_rhorho_static_current->setAccessMode(FFTGrid::READ);
 
-  float value, value2;
+  float value, value2; // Cov_Ch = cov_SS + cov_CC- covSC- covCS
   for(int i = 0; i < nxp; i++){
     for(int j = 0; j < nyp; j++){
       for(int k = 0; k < nzp; k++){
-        value  = cov_rho_total->getRealValue(i,j,k);
+        value  = cov_rho_change->getRealValue(i,j,k,true);
         value2 = cov_rhorho_static_current->getRealValueCyclic(-i, -j, -k);
-        cov_rho_total->setRealValue(i, j, k, value-value2);
+        cov_rho_change->setRealValue(i, j, k, value-value2,true);
       }
     }
   }
-  cov_rho_total           ->endAccess();
+  cov_rho_change           ->endAccess();
   cov_rhorho_static_current->endAccess();
+  //cov_rho_change->writeAsciiFile("covRhoChange.dat");
 
-// Now we have a parameter for inversion: meanRhoTotal and covRhoTotal
-  if(mean_rho_total->getIsTransformed() == false)
-    mean_rho_total->fftInPlace();
+// Now we have a parameter for inversion: meanRhoChange and covRhoChange
+  if(mean_rho_change->getIsTransformed() == false)
+    mean_rho_change->fftInPlace();
 
   // Upscale Rho: Convolution in FFT domain and pointwise multiplication
-  mean_rho_total->multiply(upscaling_kernel_conj);  // Now is expMeanRhoTotal smoothed
+  mean_rho_change->multiply(upscaling_kernel_conj);  // Now is expMeanRhoTotal smoothed
 
   // Subsample in FFTDomain
-  FFTGrid * upscaled_mean_rho_total;
-  Subsample(upscaled_mean_rho_total, mean_rho_total,
+  FFTGrid * upscaled_mean_rho_change;
+  Subsample(upscaled_mean_rho_change, mean_rho_change,
             nx_upscaled,  ny_upscaled,  nz_upscaled,
             nxp_upscaled, nyp_upscaled, nzp_upscaled);
+  int cnx_upscaled=upscaled_mean_rho_change->getCNxp();
+
+  if(upscaled_mean_rho_change->getIsTransformed())
+    upscaled_mean_rho_change->invFFTInPlace();
 
   // Upscale Covariance
-  if(cov_rho_total->getIsTransformed() == false)
-    cov_rho_total->fftInPlace();
+  if(cov_rho_change->getIsTransformed() == false)
+    cov_rho_change->fftInPlace();
 
   // Convolution in the FFTdomain;
-  cov_rho_total->multiply(upscaling_kernel_abs);  // Now is expCovRhoTotal smoothed
-  cov_rho_total->multiply(upscaling_kernel_abs);  // Abs value (or use complex conjugate);
+  cov_rho_change->multiply(upscaling_kernel_abs);  // Now is expCovRhoTotal smoothed
+  cov_rho_change->multiply(upscaling_kernel_abs);  // Abs value (or use complex conjugate);
 
   // Subsample in FFTDomain
-  FFTGrid * upscaled_cov_rho_total;
-  Subsample(upscaled_cov_rho_total, cov_rho_total,
+  FFTGrid * upscaled_cov_rho_change;
+  Subsample(upscaled_cov_rho_change, cov_rho_change,
             nx_upscaled, ny_upscaled, nz_upscaled,
             nxp_upscaled, nyp_upscaled, nzp_upscaled);
 
-
-  if(upscaled_mean_rho_total->getIsTransformed())
-    upscaled_mean_rho_total->invFFTInPlace();
-
-  if(upscaled_cov_rho_total->getIsTransformed())
-    upscaled_cov_rho_total->invFFTInPlace();
-
+  if(upscaled_cov_rho_change->getIsTransformed())
+    upscaled_cov_rho_change->invFFTInPlace();
+  //upscaled_cov_rho_change->writeAsciiFile("upscaled_cov_rho_change.txt");
 
   LogKit::WriteHeader("Performing Gravimetric Inversion");
 
@@ -186,26 +196,28 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   ExpandMatrixWithZeros(G, Np_up, include_level_shift);
 
   NRLib::Vector    Rho(Np_up);
-  VectorizeFFTGrid(Rho, upscaled_mean_rho_total);
+  VectorizeFFTGrid(Rho, upscaled_mean_rho_change);
 
   NRLib::Matrix            Sigma(Np_up, Np_up);
   NRLib::InitializeMatrix (Sigma, 0.0);
-  ReshapeCovAccordingToLag(Sigma, upscaled_cov_rho_total);
+  ReshapeCovAccordingToLag(Sigma, upscaled_cov_rho_change);
 
-  NRLib::Vector      gravity_data(30);
-  std::vector<float> d = modelGravityDynamic->GetGravityResponse();
+  NRLib::Vector      gravity_data(nObs);
+  std::vector<float> d  = modelGravityDynamic->GetGravityResponse();
+  std::vector<float> d0 = modelGravityStatic->GetGravityResponse();
 
-  NRLib::Matrix           Sigma_error(30, 30);
+  NRLib::Matrix           Sigma_error(nObs, nObs);
   NRLib::InitializeMatrix(Sigma_error, 0.0);
   std::vector<float> std_dev = modelGravityDynamic->GetGravityStdDev();
 
   //spool over data from std vec to NRLib Vector and summing the squares of the data values for use in level shift
-    for(int i = 0; i<gravity_data.length(); i++){
-      gravity_data(i)  = d[i];
-      shift_parameter += d[i]*d[i];
+    for(int i = 0; i<nObs; i++){
+      gravity_data(i)  = d[i]-d0[i];
+      shift_variance += std_dev[i]*std_dev[i];
       Sigma_error(i,i) = std_dev[i];
     }
-    shift_parameter = shift_parameter*10;
+
+  shift_variance /= nObs;
 
   if(include_level_shift){
     // Expand prior mean with one element equal to 0
@@ -218,10 +230,14 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
     Rho = RhoNew;
 
     // Expand prior covariance matrix
-    ExpandCovMatrixWithLevelShift(Sigma, shift_parameter);
+    ExpandCovMatrixWithLevelShift(Sigma, shift_variance);
   }
 
-  NRLib::WriteVectorToFile("Rho_prior.txt", Rho);
+  NRLib::WriteMatrixToFile("Sigma_m.txt", Sigma);
+  NRLib::WriteMatrixToFile("Sigma_error.txt", Sigma_error);
+  NRLib::WriteVectorToFile("Mu.txt", Rho);
+  NRLib::WriteVectorToFile("Gravity_data.txt",gravity_data);
+  NRLib::WriteVectorToFile("PriorResponce.txt",modelGravityDynamic->GetSyntheticData());
 
   NRLib::Vector Rho_posterior  (Np_up);
   NRLib::Matrix Sigma_posterior(Np_up, Np_up);
@@ -234,7 +250,7 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
   NRLib::Matrix inv_G_Sigma_GT_plus_Sigma_error = G_Sigma_GT + Sigma_error;
   NRLib::Invert(inv_G_Sigma_GT_plus_Sigma_error);
 
-  NRLib::Vector temp_1 = gravity_data - G*Rho;
+  NRLib::Vector temp_1 = gravity_data - modelGravityDynamic->GetSyntheticData(); // NBNB bias correction do not use G*Rho but GetSyntheticData()
   NRLib::Vector temp_2 = inv_G_Sigma_GT_plus_Sigma_error * temp_1;
   temp_1               = Sigma_GT*temp_2;
   Rho_posterior        = Rho + temp_1;
@@ -249,146 +265,204 @@ GravimetricInversion::GravimetricInversion(ModelGeneral            *  modelGener
     RemoveLevelShiftFromVector(Rho_posterior, level_shift);
     RemoveLevelShiftFromCovMatrix(Sigma_posterior);
   }
-  NRLib::WriteVectorToFile("Rho_posterior.txt", Rho_posterior);
+  NRLib::WriteVectorToFile("Rho_posterior.txt", Rho_posterior); NRLib::WriteMatrixToFile("Sigma_posterior.txt", Sigma_posterior);
 
   // Reshape back to FFTGrid
-  ReshapeVectorToFFTGrid(upscaled_mean_rho_total, Rho_posterior);
+  ReshapeVectorToFFTGrid(upscaled_mean_rho_change, Rho_posterior);
 
   // For backsampling and deconvolution, need to be in FFT-domain
-  if(mean_rho_total->getIsTransformed()==false)
-    mean_rho_total->fftInPlace();
+  if(mean_rho_change->getIsTransformed()==false)
+    mean_rho_change->fftInPlace();
 
-  if(upscaled_mean_rho_total->getIsTransformed()==false)
-    upscaled_mean_rho_total->fftInPlace();
+  if(upscaled_mean_rho_change->getIsTransformed()==false)
+    upscaled_mean_rho_change->fftInPlace();
 
   //Backsample and deconvolve in Fourier domain
-  Backsample(upscaled_mean_rho_total, mean_rho_total); //Now meanRhoTotal is posterior!
-  Divide(mean_rho_total, upscaling_kernel_conj);
+  Backsample(upscaled_mean_rho_change, mean_rho_change); //Now meanRhoTotal is posterior!
+  Divide(mean_rho_change, upscaling_kernel_conj);
+
+  if(mean_rho_change->getIsTransformed())
+    mean_rho_change->invFFTInPlace();
+
+  ComputeSyntheticGravimetry(mean_rho_change, modelGravityDynamic, level_shift);
+
 
   /// Posterior upscaled covariance
-  FFTGrid * posterior_upscaled_cov_rho_total = new FFTGrid(nx_upscaled, ny_upscaled, nz_upscaled,
+  FFTGrid * posterior_upscaled_cov_rho_change = new FFTGrid(nx_upscaled, ny_upscaled, nz_upscaled,
                                                            nxp_upscaled, nyp_upscaled, nzp_upscaled);
-  posterior_upscaled_cov_rho_total->createRealGrid();
-  posterior_upscaled_cov_rho_total->setType(FFTGrid::PARAMETER);
+  posterior_upscaled_cov_rho_change->createRealGrid();
+  posterior_upscaled_cov_rho_change->setType(FFTGrid::COVARIANCE);
 
-  ReshapeCovMatrixToFFTGrid(posterior_upscaled_cov_rho_total, Sigma_posterior);
+  ReshapeCovMatrixToFFTGrid(posterior_upscaled_cov_rho_change, Sigma_posterior);
 
 
-  // Odds algorithme
+  // Odds algorithm
   // Pick elements that corresponds to effect of inversion, not from adjusting to pos def matrix, in FFT domain
   FFTGrid * fft_factor = new FFTGrid(nx_upscaled,  ny_upscaled,  nz_upscaled,
                                      nxp_upscaled, nyp_upscaled, nzp_upscaled);
   fft_factor->createRealGrid();
-  fft_factor->setType(FFTGrid::PARAMETER);
-  fft_factor->fillInConstant(1.0);  // ikke i padded område
+  fft_factor->setType(FFTGrid::OPERATOR);
+  fft_factor->fillInConstant(0.0f);
+  fft_factor->fftInPlace();
+
 
   // Need to be in FFT-domain
-  if(upscaled_cov_rho_total->getIsTransformed() == false)
-    upscaled_cov_rho_total->fftInPlace();
-  if(posterior_upscaled_cov_rho_total->getIsTransformed() == false)
-    posterior_upscaled_cov_rho_total->fftInPlace();
+  if(upscaled_cov_rho_change->getIsTransformed() == false)
+    upscaled_cov_rho_change->fftInPlace();
+  if(posterior_upscaled_cov_rho_change->getIsTransformed() == false)
+    posterior_upscaled_cov_rho_change->fftInPlace();
 
-  fftw_complex reference;
+  float reference;
   double nu = 0.05;
-  fftw_complex prior = upscaled_cov_rho_total          ->getFirstComplexValue();
-  fftw_complex post  = posterior_upscaled_cov_rho_total->getFirstComplexValue();
-  reference.re = prior.re - post.re;
-  reference.im = prior.im - post.im;
-  reference.re = static_cast<fftw_real>(reference.re*nu);
-  reference.im = static_cast<fftw_real>(reference.im*nu);
+  fftw_complex prior = upscaled_cov_rho_change          ->getFirstComplexValue();
+  fftw_complex post  = posterior_upscaled_cov_rho_change->getFirstComplexValue();
+  reference =  post.re/prior.re*nu;
 
   fft_factor                      ->setAccessMode(FFTGrid::WRITE);
-  upscaled_cov_rho_total          ->setAccessMode(FFTGrid::READ);
-  posterior_upscaled_cov_rho_total->setAccessMode(FFTGrid::READ);
-
+  upscaled_cov_rho_change          ->setAccessMode(FFTGrid::READ);
+  posterior_upscaled_cov_rho_change->setAccessMode(FFTGrid::READ);
+  fftw_complex one;
+  one.re=1.0f;
+  one.im=0.0f;
   for(int k = 0; k < nz_upscaled; k++){
     for(int j = 0; j < ny_upscaled; j++){
-      for(int i = 0; i < nx_upscaled; i++){
-        prior = upscaled_cov_rho_total          ->getComplexValue(i,j,k);
-        post  = posterior_upscaled_cov_rho_total->getComplexValue(i,j,k);
+      for(int i = 0; i < cnx_upscaled; i++){
+        prior = upscaled_cov_rho_change          ->getComplexValue(i,j,k,true);
+        post  = posterior_upscaled_cov_rho_change->getComplexValue(i,j,k,true);
 
-        fftw_complex m;
-        m.re = prior.re - post.re;
-        m.im = prior.im - post.im;
+        float m;
+        m = post.re/ prior.re;
 
-        if(m.re > reference.re){  // Need only consider real part
+        if(m > reference){
           fftw_complex ratio;
-          ratio.re = posterior_upscaled_cov_rho_total->getComplexValue(i,j,k).re/upscaled_cov_rho_total->getComplexValue(i,j,k).re;
+          ratio.re = posterior_upscaled_cov_rho_change->getComplexValue(i,j,k).re/upscaled_cov_rho_change->getComplexValue(i,j,k,true).re;
+          ratio.im=0.0;
 
-          float value = static_cast<float>(ratio.re);
-          if(value < 1)
-            fft_factor->setRealValue(i, j, k, value);
+          if(ratio.re < 1)
+            fft_factor->setComplexValue(i, j, k, ratio,true);
           else
-            fft_factor->setRealValue(i, j, k, 1);
+            fft_factor->setComplexValue(i, j, k, one,true);
         }
         else{
-          fft_factor->setRealValue(i, j, k, 1);
+          fft_factor->setComplexValue(i, j, k, one,true);
         }
       }
     }
   }
   fft_factor                      ->endAccess();
-  upscaled_cov_rho_total          ->endAccess();
-  posterior_upscaled_cov_rho_total->endAccess();
+  upscaled_cov_rho_change          ->endAccess();
+  posterior_upscaled_cov_rho_change->endAccess();
 
-  posterior_upscaled_cov_rho_total = upscaled_cov_rho_total; // Set posterior equal to prior and introduce effects of inversion through factors in fft_factor-grid
+  posterior_upscaled_cov_rho_change = upscaled_cov_rho_change; // Set posterior equal to prior and introduce effects of inversion through factors in fft_factor-grid
 
-  posterior_upscaled_cov_rho_total->multiply(fft_factor);  // pointwise multiplication in real domain
+  posterior_upscaled_cov_rho_change->multiply(fft_factor);  // pointwise multiplication in complex domain
 
   // For backsampling and deconvolution need to be in Fourier domain
-   if(cov_rho_total->getIsTransformed() == false)
-    cov_rho_total->fftInPlace();
+   if(cov_rho_change->getIsTransformed() == false)
+    cov_rho_change->fftInPlace();
 
-   if(posterior_upscaled_cov_rho_total->getIsTransformed() == false)
-     posterior_upscaled_cov_rho_total->fftInPlace();
+   if(posterior_upscaled_cov_rho_change->getIsTransformed() == false)
+     posterior_upscaled_cov_rho_change->fftInPlace();
 
   //Backsample in Fourier domain
-  Backsample(posterior_upscaled_cov_rho_total, cov_rho_total);  // covRhoTotal is now posterior!
+  Backsample(posterior_upscaled_cov_rho_change, cov_rho_change);  // covRhoTotal is now posterior!
 
   // Deconvolution: Do pointwise division in FFTdomain - twice
-  Divide(cov_rho_total, upscaling_kernel_abs);
-  Divide(cov_rho_total, upscaling_kernel_abs);
+  Divide(cov_rho_change, upscaling_kernel_abs);
+  Divide(cov_rho_change, upscaling_kernel_abs);
 
 
    // Only for debugging purposes
-  if(posterior_upscaled_cov_rho_total->getIsTransformed() == true)
-    posterior_upscaled_cov_rho_total->invFFTInPlace();
+  if(posterior_upscaled_cov_rho_change->getIsTransformed() == true)
+    posterior_upscaled_cov_rho_change->invFFTInPlace();
   NRLib::Matrix Post_sigma_temp(Np_up, Np_up);
   NRLib::InitializeMatrix (Post_sigma_temp, 0.0);
-
-  ReshapeCovAccordingToLag(Post_sigma_temp, posterior_upscaled_cov_rho_total);
-  NRLib::WriteMatrixToFile("Sigma_posterior.txt", Post_sigma_temp);
-
+  ReshapeCovAccordingToLag(Post_sigma_temp, posterior_upscaled_cov_rho_change);
+  NRLib::WriteMatrixToFile("Sigma_posterior2.txt", Post_sigma_temp);
 
   // For transforming back to log-domain, need to be in real domain
-  if(cov_rho_total->getIsTransformed())
-    cov_rho_total->invFFTInPlace();
+   if(cov_rho_change->getIsTransformed() == true)
+    cov_rho_change->invFFTInPlace();
 
-  if(mean_rho_total->getIsTransformed())
-    mean_rho_total->invFFTInPlace();
+  // Comput joint distribution of current and static  in exp domain
+  mean_rho_change->add(mean_rho_static); // is now  current in exp domain
 
-  // Transform back to log scale
-  float mean_total = GetMeanForTransformation(mean_rho_total);
-  CovLogTransform(cov_rho_total, mean_total);
+  // inverting the relation C_dd = C_cc -C_cs-C_sc + C_ss
+  // C_cc  = C_dd - C_ss + C_cs + C_sc
+  cov_rho_change->subtract(cov_rho_static); // - C_ss
+  cov_rho_change->add( cov_rhorho_static_current); // + C_sc
+  cov_rho_change            ->setAccessMode(FFTGrid::READANDWRITE);
+  cov_rhorho_static_current->setAccessMode(FFTGrid::READ);
 
-  sigma_squared = GetSigmaForTransformation(cov_rho_total);
-  MeanLogTransform(mean_rho_total, sigma_squared);
+//  float value, value2; //  + C_cs
+  for(int i = 0; i < nxp; i++){
+    for(int j = 0; j < nyp; j++){
+      for(int k = 0; k < nzp; k++){
+        value  = cov_rho_change->getRealValue(i,j,k,true);
+        value2 = cov_rhorho_static_current->getRealValueCyclic(-i, -j, -k);
+        cov_rho_change->setRealValue(i, j, k, value+value2,true);
+      }
+    }
+  }
+  cov_rho_change           ->endAccess();
+  cov_rhorho_static_current->endAccess();
+  //cov_rho_change->writeAsciiFile("covRhoChange.dat");
 
-  // Kind of ready to put back into seismicparametersholder and state4d.
-  // Need some merge functions or split or something
-  // Sorry about uncomplete code.
+  // Computing properties for "Log World"
 
-  ComputeSyntheticGravimetry(mean_rho_total, modelGravityDynamic, level_shift);
+  // float exp_mean_change = GetMeanForTransformation(mean_rho_change);
+  // Using exp_mean_current from start to match transform of prior
+  CovLogTransform(cov_rho_change, exp_mean_current);
+  CovLogTransform (cov_rho_static,  exp_mean_static);
+  CrCovLogTransform(cov_rhorho_static_current, exp_mean_static, exp_mean_current);
+
+
+  float log_sigma_squared_change = GetSigmaForTransformation(cov_rho_change);
+  MeanLogTransform(mean_rho_change, log_sigma_squared_change);
+  MeanLogTransform(mean_rho_static, log_sigma_squared_static);
+
+
+  // computing dynamic part in  log world
+  mean_rho_change->subtract(mean_rho_static);// is now  dynamic change in log  domain
+
+  //  d=c-s
+  // C_dd  = C_cc -C_cs-C_sc+C_ss
+  cov_rho_change->add(cov_rho_static); // +C_ss
+  cov_rho_change->subtract(cov_rhorho_static_current); // -C_sc
+
+  cov_rho_change            ->setAccessMode(FFTGrid::READANDWRITE);// -C_cs anc below
+  cov_rhorho_static_current->setAccessMode(FFTGrid::READ);
+
+ // Cov_Ch = cov_SS + cov_CC- covSC- covCS
+  for(int i = 0; i < nxp; i++){
+    for(int j = 0; j < nyp; j++){
+      for(int k = 0; k < nzp; k++){
+        value  = cov_rho_change->getRealValue(i,j,k,true);
+        value2 = cov_rhorho_static_current->getRealValueCyclic(-i, -j, -k);
+        cov_rho_change->setRealValue(i, j, k, value-value2,true);
+      }
+    }
+  }
+  cov_rho_change           ->endAccess();
+  cov_rhorho_static_current->endAccess();
+
+  // Ready to put back into seismicparametersholder and state4d
+  mean_rho_change->fftInPlace();
+  cov_rho_change->fftInPlace();
+  state4d->updateWithSingleParameter(mean_rho_change,cov_rho_change ,5);
 
   // Delete all FFTGrids create with "new"
   delete upscaling_kernel_conj;
   delete upscaling_kernel_abs;
+  delete mean_rho_current;
+  delete cov_rho_current;
   delete mean_rho_static;
   delete cov_rho_static;
   delete cov_rhorho_static_current;
   delete cov_rhorho_static_dynamic;
-  delete mean_rho_total;
-  delete cov_rho_total;
+  delete mean_rho_change;
+  delete cov_rho_change;
+  delete posterior_upscaled_cov_rho_change;
 
   delete fft_factor;
 }
@@ -402,12 +476,14 @@ float
 {
   float sigma_squared = 0;
   if(sigma->getIsTransformed() == false){
+
     sigma_squared = sigma->getFirstRealValue();   // \sigma^2
   }
   else{
   // Loop though grid in complex domain.
     sigma_squared = 0;
 
+    double realSum=0.0;
     fftw_complex sum;
     sum.re = 0.0;
     sum.im = 0.0;
@@ -419,9 +495,9 @@ float
       for(int j=0; j<sigma->getNyp(); j++){
         for(int i=0; i<sigma->getCNxp(); i++){
           f=2;
-          if(i == 0)
+          if(i == 0)                   // the first does not have a complex conjugate
             f = 1;
-          if(sigma->getCNxp() % 2 == 1){
+          if(sigma->getNxp() % 2 == 0){ // if there is an even number the last does not have a complex conjugate
             if(i==sigma->getCNxp()-1)
               f=1;
           }
@@ -429,14 +505,15 @@ float
           fftw_complex value = sigma->getNextComplex();
           sum.re += f*value.re;
           sum.im += f*value.im;   // Blir ikke null, fordi summerer ikke konjugerte par i praksis
+          realSum +=f*value.re;
         }
       }
     }
     sigma->endAccess();
 
     // Due to summing complex conjugate numbers, then imaginary part is zero
-    int N = sigma->getNxp()*sigma->getNyp()*sigma->getNzp();
-    sigma_squared = sum.re/N;
+    double N = static_cast<double>(sigma->getNxp()*sigma->getNyp()*sigma->getNzp());
+    sigma_squared = static_cast<float>(realSum/N);
   }
   return(sigma_squared);
 }
@@ -457,21 +534,24 @@ float
   else{
     // Loop through grid in real domain
     grid->setAccessMode(FFTGrid::READ);
-    float sum = 0.0;
+    double sum = 0.0;
+    double partSum;
     for(int k=0;k<grid->getNzp();k++) {
       for(int j=0;j<grid->getNyp();j++) {
+        partSum=0.0;
         for(int i=0;i<grid->getNxp();i++) {
-          sum += grid->getNextReal();
+          partSum += grid->getNextReal();
         }
         for(int i = 0; i<grid->getRNxp()-grid->getNxp(); i++){
           grid->getNextReal();
         }
+        sum += partSum;
       }
     }
     grid->endAccess();
 
-    float N = static_cast<float>(grid->getNxp()*grid->getNyp()*grid->getNzp());
-    mean = sum/N;
+    double N = static_cast<double>(grid->getNxp()*grid->getNyp()*grid->getNzp());
+    mean = static_cast<float>(sum/N);
 
   }
 
@@ -489,7 +569,8 @@ void
 
 void
   GravimetricInversion::CovExpTransform(FFTGrid  * log_cov, float mean)
-{
+{ // Note  mean is mean of exp variable
+  //  log_cov is for the log variable
   assert(log_cov->getIsTransformed() == false);
 
   log_cov->expTransf();
@@ -527,18 +608,32 @@ void
 }
 
 void
+  GravimetricInversion::CrCovLogTransform(FFTGrid * cov,  float mean_a, float mean_b)
+{
+  assert(cov->getIsTransformed() == false);
+
+  cov->multiplyByScalar(1.0f/(mean_a*mean_b));
+  cov->addScalar(1);
+  cov->logTransf();
+
+
+}
+
+
+
+void
   GravimetricInversion::Subsample(FFTGrid *& upscaled_grid, FFTGrid * original_grid, int nx_up, int ny_up, int nz_up, int nxp_up, int nyp_up, int nzp_up)
 {
   assert(original_grid->getIsTransformed());
 
   upscaled_grid = new FFTGrid(nx_up, ny_up, nz_up, nxp_up, nyp_up, nzp_up);
   upscaled_grid->createComplexGrid();
-  upscaled_grid->setType(FFTGrid::PARAMETER);
+  int cnxp_up= upscaled_grid->getCNxp();
+  upscaled_grid->setType(original_grid->getType());
 
   upscaled_grid->setAccessMode(FFTGrid::WRITE);
   original_grid->setAccessMode(FFTGrid::READ);
 
-  int nxp_up_half = static_cast<int>(ceil(static_cast<double>(nxp_up)/2));
   int nyp_up_half = static_cast<int>(ceil(static_cast<double>(nyp_up)/2));
   int nzp_up_half = static_cast<int>(ceil(static_cast<double>(nzp_up)/2));
   int nxp = original_grid->getNxp();
@@ -546,16 +641,10 @@ void
   int nzp = original_grid->getNzp();
 
   // Set up index-vectorer
-  std::vector<int> x_indices(nxp_up);
   std::vector<int> y_indices(nyp_up);
   std::vector<int> z_indices(nzp_up);
 
-  for(int i = 0; i<nxp_up; i++){
-    if(i<nxp_up_half)
-      x_indices[i] = i;
-    else
-      x_indices[i] = nxp - (nxp_up - i);
-  }
+
   for(int i = 0; i<nyp_up; i++){
     if(i<nyp_up_half)
       y_indices[i] = i;
@@ -570,15 +659,19 @@ void
   }
 
   // Subsample the grid in FFT domain - use also padded region.
-  for(int i = 0; i < nxp_up; i++){
+  for(int i = 0; i < cnxp_up; i++){
     for(int j = 0; j < nyp_up; j++){
       for(int k = 0; k < nzp_up; k++){
-        upscaled_grid->setComplexValue(i, j, k, original_grid->getComplexValue(x_indices[i], y_indices[j], z_indices[k], true));
+        upscaled_grid->setComplexValue(i, j, k, original_grid->getComplexValue(i, y_indices[j], z_indices[k], true),true);
       }
     }
   }
   upscaled_grid->endAccess();
   original_grid->endAccess();
+  if(original_grid->getType()== FFTGrid::PARAMETER)
+    upscaled_grid->multiplyByScalar(static_cast<float>(sqrt( static_cast<double>(nxp_up*nyp_up*nzp_up)/static_cast<double>(nxp*nyp*nzp))));
+  if(original_grid->getType()== FFTGrid::COVARIANCE)
+    upscaled_grid->multiplyByScalar(static_cast<float>(static_cast<double>(nxp_up*nyp_up*nzp_up)/static_cast<double>(nxp*nyp*nzp)));
 }
 
 void
@@ -590,29 +683,30 @@ void
   new_full_grid->setAccessMode(FFTGrid::WRITE);
   upscaled_grid->setAccessMode(FFTGrid::READ);
 
+  int cnxp_up = upscaled_grid->getCNxp();
   int nxp_up = upscaled_grid->getNxp();
   int nyp_up = upscaled_grid->getNyp();
   int nzp_up = upscaled_grid->getNzp();
 
-  int nxp = new_full_grid->getNxp();
+  int nxp  = new_full_grid->getNxp();
   int nyp  = new_full_grid->getNyp();
   int nzp  = new_full_grid->getNzp();
 
-  int nxp_up_half = static_cast<int>(ceil(static_cast<double>(nxp_up)/2));
+   if(new_full_grid->getType()== FFTGrid::PARAMETER)
+    upscaled_grid->multiplyByScalar(static_cast<float>(sqrt( static_cast<double>(nxp*nyp*nzp)/static_cast<double>(nxp_up*nyp_up*nzp_up))));
+  if(new_full_grid->getType()== FFTGrid::COVARIANCE)
+    upscaled_grid->multiplyByScalar(static_cast<float>(static_cast<double>(nxp*nyp*nzp)/static_cast<double>(nxp_up*nyp_up*nzp_up)));
+
+
   int nyp_up_half = static_cast<int>(ceil(static_cast<double>(nyp_up)/2));
   int nzp_up_half = static_cast<int>(ceil(static_cast<double>(nzp_up)/2));
 
   // Set up index-vectorer
-  std::vector<int> x_indices(nxp_up);
+
   std::vector<int> y_indices(nyp_up);
   std::vector<int> z_indices(nzp_up);
 
-  for(int i = 0; i<nxp_up; i++){
-    if(i<nxp_up_half)
-      x_indices[i] = i;
-    else
-      x_indices[i] = nxp - (nxp_up - i);
-  }
+
   for(int i = 0; i<nyp_up; i++){
     if(i<nyp_up_half)
       y_indices[i] = i;
@@ -625,12 +719,11 @@ void
     else
       z_indices[i] = nzp - (nzp_up - i);
   }
-
   // Subsample the grid in FFT domain - use also padded region
-  for(int i = 0; i < nxp_up; i++){
+  for(int i = 0; i < cnxp_up; i++){
     for(int j = 0; j < nyp_up; j++){
       for(int k = 0; k < nzp_up; k++){
-        new_full_grid->setComplexValue(x_indices[i], y_indices[j], z_indices[k], upscaled_grid->getComplexValue(i,j,k, true));
+        new_full_grid->setComplexValue(i, y_indices[j], z_indices[k], upscaled_grid->getComplexValue(i,j,k, true));
       }
     }
   }
@@ -656,14 +749,14 @@ void
   nz = grid->getNz();
   }
 
-  grid->setAccessMode(FFTGrid::READ);
+  grid->setAccessMode(FFTGrid::RANDOMACCESS);
 
   int I = 0;
-  for(int i = 1; i <= nx; i++){
-    for(int j = 1; j <= ny; j++){
-      for(int k = 1; k <= nz; k++){
-        I =  i + (j-1)*nx + (k-1)*nx*ny;
-        vec(I-1) = grid->getNextReal();
+  for(int i = 0; i < nx; i++){
+    for(int j = 0; j < ny; j++){
+      for(int k = 0; k < nz; k++){
+        I =  i + j*nx + k*nx*ny;
+        vec(I) = grid->getRealValue(i,j,k,true);
       }
     }
   }
@@ -675,17 +768,17 @@ void
 {
   assert(grid->getIsTransformed() == false);
 
-  grid->setAccessMode(FFTGrid::WRITE);
+  grid->setAccessMode(FFTGrid::RANDOMACCESS);
 
   int nxp = grid->getNxp();
   int nyp = grid->getNyp();
   int nzp = grid->getNzp();
   int I = 0;
-  for(int i = 1; i <= nxp; i++){
-    for(int j = 1; j <= nyp; j++){
-      for(int k = 1; k <= nzp; k++){
-        I =  i + (j-1)*nxp + (k-1)*nxp*nyp;
-        grid->setNextReal(static_cast<float>(vec(I-1)));
+  for(int i = 0; i < nxp; i++){
+    for(int j = 0; j < nyp; j++){
+      for(int k = 0; k < nzp; k++){
+        I =  i + j*nxp + k*nxp*nyp;
+        grid->setRealValue(i,j,k,static_cast<float>(vec(I)),true);
       }
     }
   }
@@ -790,7 +883,7 @@ void
       for(int i1 = 0; i1 < nxp; i1++){
         if(counter[i1][j1][k1]>0){
           float value = sum[i1][j1][k1]/counter[i1][j1][k1];
-          cov_grid->setRealValue(i1, j1, k1, value);
+          cov_grid->setRealValue(i1, j1, k1, value,true);
         }
       }
     }
@@ -829,27 +922,26 @@ void
 }
 
 void
-  GravimetricInversion::ExpandCovMatrixWithLevelShift(NRLib::Matrix &Sigma, double shift_parameter)
+  GravimetricInversion::ExpandCovMatrixWithLevelShift(NRLib::Matrix &Sigma, double shift_variance)
 {
     int r = Sigma.rows().length();
-    int c = Sigma.cols().length();
 
-    NRLib::Matrix Sigma_star(r+1, c+1);
+    NRLib::Matrix Sigma_star(r+1, r+1);
     NRLib::InitializeMatrix(Sigma_star, 0.0);
 
     // Copy all values except last row and last column - they are left to be zero.
     for(int i = 0; i<r; i++)
-      for(int j = 0; j<c; j++){
+      for(int j = 0; j<r; j++){
         Sigma_star(i,j) = Sigma(i,j);
     }
     // Set last element
-    Sigma_star(r,c) = shift_parameter;
+    Sigma_star(r,r) = shift_variance;
 
     Sigma = Sigma_star;
 }
 
 void
-  GravimetricInversion::RemoveLevelShiftFromVector(NRLib::Vector &rho, double level_shift)
+  GravimetricInversion::RemoveLevelShiftFromVector(NRLib::Vector &rho, double &level_shift)
 {
     int r       = rho.length();
 
@@ -868,12 +960,11 @@ void
   GravimetricInversion::RemoveLevelShiftFromCovMatrix(NRLib::Matrix &Sigma)
 {
   int r = Sigma.rows().length();
-  int c = Sigma.cols().length();
 
   // Copy all elements except last row and last column
-  NRLib::Matrix new_Sigma(r-1, c-1);
+  NRLib::Matrix new_Sigma(r-1, r-1);
   for(int i = 0; i<r-1; i++)
-    for(int j = 0; j<c-1; j++){
+    for(int j = 0; j<r-1; j++){
       new_Sigma(i,j) = Sigma(i,j);
     }
 

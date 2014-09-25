@@ -45,8 +45,7 @@ ModelGravityDynamic::ModelGravityDynamic(const ModelSettings          * modelSet
                                          const ModelGeneral           * modelGeneral,
                                          ModelGravityStatic           * modelGravityStatic,
                                          const InputFiles             * inputFiles,
-                                         int                            t,
-                                         SeismicParametersHolder      & seismicParameters)
+                                         int                            t)
 
 {
   modelGeneral_ = modelGeneral;
@@ -58,7 +57,6 @@ ModelGravityDynamic::ModelGravityDynamic(const ModelSettings          * modelSet
   bool failedReadingFile  = false;
   std::string errText("");
 
-  int nObs = 30;     // should this be given in input file
   int nColumns = 5;  // We require data files to have five columns
 
   // Check that timeLapse is ok
@@ -73,15 +71,15 @@ ModelGravityDynamic::ModelGravityDynamic(const ModelSettings          * modelSet
     // Find first gravity data file
     std::string fileName = inputFiles->getGravimetricData(thisTimeLapse_);
 
-    observation_location_utmx_ .resize(nObs);
-    observation_location_utmy_ .resize(nObs);
-    observation_location_depth_.resize(nObs);
-    gravity_response_.resize(nObs);
-    gravity_std_dev_ .resize(nObs);
+    observation_location_utmx_ .resize(1);
+    observation_location_utmy_ .resize(1);
+    observation_location_depth_.resize(1);
+    gravity_response_.resize(1);
+    gravity_std_dev_ .resize(1);
 
     ModelGravityStatic::ReadGravityDataFile(fileName,
                                             "gravimetric survey ",
-                                            nObs, nColumns,
+                                            nColumns,
                                             observation_location_utmx_,
                                             observation_location_utmy_,
                                             observation_location_depth_,
@@ -92,7 +90,7 @@ ModelGravityDynamic::ModelGravityDynamic(const ModelSettings          * modelSet
     failedLoadingModel = failedReadingFile;
 
     LogKit::LogFormatted(LogKit::Low, "Setting up forward model matrix ...");
-    BuildGMatrix(modelGravityStatic, seismicParameters);
+    BuildGMatrix(modelGravityStatic);
     LogKit::LogFormatted(LogKit::Low, "ok.\n");
   }
 
@@ -111,28 +109,28 @@ ModelGravityDynamic::~ModelGravityDynamic(void)
 {
 }
 
-void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravityStatic,
-                                       SeismicParametersHolder & seismicParameters)
+void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravityStatic)
 {
   // Building gravity matrix for each time vintage, using updated mean Vp in generating the grid.
   double gamma = 6.67384e-11; // units: m^3/(kg*s^2)
 
-  Simbox * fullSizeTimeSimbox = modelGeneral_     ->getTimeSimbox();
+ // Simbox * fullSizeTimeSimbox = modelGeneral_->getTimeSimbox();
+  Simbox * fullSizeDepthSimbox = modelGeneral_->getDepthSimbox();
 
   // Use vp_current, found in Seismic parameters holder.
-  FFTGrid * expMeanAlpha      = new FFTGrid(seismicParameters.GetMuAlpha());  // for upscaling
-  FFTGrid * meanAlphaFullSize = new FFTGrid(expMeanAlpha);                    // for full size matrix
+ // FFTGrid * expMeanAlpha      = new FFTGrid(seismicParameters.GetMuAlpha());  // for upscaling
+ // FFTGrid * meanAlphaFullSize = new FFTGrid(expMeanAlpha);                    // for full size matrix
 
-  int nx = fullSizeTimeSimbox->getnx();
-  int ny = fullSizeTimeSimbox->getny();
-  int nz = fullSizeTimeSimbox->getnz();
+  int nx = fullSizeDepthSimbox->getnx();
+  int ny = fullSizeDepthSimbox->getny();
+  int nz = fullSizeDepthSimbox->getnz();
 
-  double dx = fullSizeTimeSimbox->getdx();
-  double dy = fullSizeTimeSimbox->getdy();
+  double dx = fullSizeDepthSimbox->getdx();
+  double dy = fullSizeDepthSimbox->getdy();
 
-  int nxp = expMeanAlpha->getNxp();
-  int nyp = expMeanAlpha->getNyp();
-  int nzp = expMeanAlpha->getNzp();
+  int nxp = modelGravityStatic->GetNxp();
+  int nyp = modelGravityStatic->GetNyp();
+  int nzp = modelGravityStatic->GetNzp();
 
   int nxp_upscaled = modelGravityStatic->GetNxp_upscaled();
   int nyp_upscaled = modelGravityStatic->GetNyp_upscaled();
@@ -153,46 +151,47 @@ void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravitySta
   int N_upscaled = nx_upscaled*ny_upscaled*nz_upscaled;
   int N_fullsize = nx*ny*nz;
 
-  int nObs = 30;
+  int nObs = modelGravityStatic->GetNData();
 
   G_         .resize(nObs, N_upscaled);
   G_fullsize_.resize(nObs, N_fullsize);
 
   // Need to be in real domain for transforming from log domain
-  if(expMeanAlpha->getIsTransformed())
-    expMeanAlpha->invFFTInPlace();
+ // if(expMeanAlpha->getIsTransformed())
+ //   expMeanAlpha->invFFTInPlace();
 
-  if(meanAlphaFullSize->getIsTransformed())
-    meanAlphaFullSize->invFFTInPlace();
+ // if(meanAlphaFullSize->getIsTransformed())
+ //   meanAlphaFullSize->invFFTInPlace();
 
-  float sigma_squared = GravimetricInversion::GetSigmaForTransformation(seismicParameters.GetCovAlpha());
-  GravimetricInversion::MeanExpTransform(expMeanAlpha,      sigma_squared);
-  GravimetricInversion::MeanExpTransform(meanAlphaFullSize, sigma_squared);
+ // float sigma_squared = GravimetricInversion::GetSigmaForTransformation(seismicParameters.GetCovAlpha());
+ // GravimetricInversion::MeanExpTransform(expMeanAlpha,      sigma_squared);
+ // GravimetricInversion::MeanExpTransform(meanAlphaFullSize, sigma_squared);
 
 
   //Smooth (convolve) and subsample
-  FFTGrid * upscalingKernel_conj = modelGravityStatic->GetUpscalingKernel();
-   if(upscalingKernel_conj->getIsTransformed() == false)
-    upscalingKernel_conj->fftInPlace();
-  upscalingKernel_conj->conjugate();  // Conjugate only in FFT domain.
+ // FFTGrid * upscalingKernel_conj = modelGravityStatic->GetUpscalingKernel();
+ //  if(upscalingKernel_conj->getIsTransformed() == false)
+ //   upscalingKernel_conj->fftInPlace();
+ // upscalingKernel_conj->conjugate();  // Conjugate only in FFT domain.
 
   // Need to be in FFT domain for convolution and subsampling
-  if(expMeanAlpha->getIsTransformed() == false)
-    expMeanAlpha->fftInPlace();
+ // if(expMeanAlpha->getIsTransformed() == false)
+  //  expMeanAlpha->fftInPlace();
 
-  expMeanAlpha->multiply(upscalingKernel_conj);  // Now is expMeanAlpha smoothed
+ // expMeanAlpha->multiply(upscalingKernel_conj);  // Now is expMeanAlpha smoothed
 
-  FFTGrid * upscaledMeanAlpha;
-  GravimetricInversion::Subsample(upscaledMeanAlpha, expMeanAlpha, nx_upscaled, ny_upscaled, nz_upscaled, nxp_upscaled, nyp_upscaled, nzp_upscaled);
+  //FFTGrid * upscaledMeanAlpha;
+  //GravimetricInversion::Subsample(upscaledMeanAlpha, expMeanAlpha, nx_upscaled, ny_upscaled, nz_upscaled, nxp_upscaled, nyp_upscaled, nzp_upscaled);
 
-  upscaledMeanAlpha->invFFTInPlace();
+ // upscaledMeanAlpha->invFFTInPlace();
 
   float x0, y0, z0; // Coordinates for the observations points
   int J = 0;        // Index in matrix counting cell number
   int I = 0;
 
-  float  vp;
-  double dt;
+ // float  vp;
+  //double dt;
+  double dz;
   double localMass;
   double localDistanceSquared;
 
@@ -208,8 +207,7 @@ void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravitySta
       for(int jj = 0; jj < ny_upscaled; jj++){
         for(int kk = 0; kk < nz_upscaled; kk++){
           double x, y, z;
-          vp = upscaledMeanAlpha->getRealValue(ii,jj,kk);
-
+          //vp = upscaledMeanAlpha->getRealValue(ii,jj,kk);
           int istart = ii*upscaling_factor_x;
           int istop  = (ii+1)*upscaling_factor_x;
           int jstart = jj*upscaling_factor_y;
@@ -217,28 +215,44 @@ void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravitySta
           int kstart = kk*upscaling_factor_z;
           int kstop = (kk+1)*upscaling_factor_z;
 
-          double x_local  = 0;
-          double y_local  = 0;
-          double z_local  = 0;
-          double dt_local = 0;
+       //   double x_local  = 0;
+       //   double y_local  = 0;
+          //double z_local  = 0;
+          //double dt_local = 0;
+          double dz_local = 0;
+          double squaredDist=0;
+          int counterIJ=0;
+          int counterIJK=0;
           //Find center position of coarse grid cell using indices of fine grid and averaging their cell centers.
-          for(int iii=istart; iii<istop; iii++){
-            for(int jjj=jstart; jjj<jstop; jjj++){
-              for(int kkk=kstart; kkk<kstop; kkk++){
-                fullSizeTimeSimbox->getCoord(iii, jjj, kkk, x, y, z);
-                x_local += x;
-                y_local += y;
-                z_local += z;   // NB Need time depth mapping!
-
-                dt_local += fullSizeTimeSimbox->getdz(iii, jjj);
+          for(int iii=istart; iii< std::min(nx,istop) ; iii++){
+            for(int jjj=jstart; jjj<std::min(ny,jstop); jjj++){
+              counterIJ++;
+              for(int kkk=kstart; kkk<std::min(nz,kstop); kkk++){
+                fullSizeDepthSimbox->getCoord(iii, jjj, kkk, x, y, z);
+               // x_local += x;
+               // y_local += y;
+               // z_local += z;
+                squaredDist += (x-x0)*(x-x0)+(y-y0)*(y-y0)+(z-z0)*(z-z0);
+                //dt_local += fullSizeTimeSimbox->getdz(iii, jjj);
+                dz_local += fullSizeDepthSimbox->getdz(iii, jjj);
+                counterIJK++;
               }
             }
           }
-          x_local  /= (upscaling_factor_x*upscaling_factor_y*upscaling_factor_z);
-          y_local  /= (upscaling_factor_x*upscaling_factor_y*upscaling_factor_z);
-          z_local  /= (upscaling_factor_x*upscaling_factor_y*upscaling_factor_z);
-          dt_local /= (upscaling_factor_x*upscaling_factor_y*upscaling_factor_z);
-
+          double zfactor=1;
+          if(counterIJK > 0){
+           // x_local  /= counterIJK;  //average => cell center
+           // y_local  /= counterIJK;  // average=> cell center
+           // z_local  /= counterIJK;  // average=> cell center
+            squaredDist/=counterIJK; // average squared distance  in cell
+           // dt_local /= counterIJ; // sum in vertical direction average in lateral
+            dz_local /= counterIJ; // sum in vertical direction average in lateral
+          }else{ // We are outside the reservoir region. Set dummyvalues and assure that there is no contribution in G
+           // x_local = x0+1;y_local = y0+1; z_local = z0+1000;dt_local=1;
+            dz_local=1;
+            squaredDist= 1000*1000;
+            zfactor=0;
+          }
           // Find fraction of dx_upscaled and dy_upscaled according to indicies
           double xfactor = 1;
           if(istop <= nx){  // inside
@@ -248,7 +262,8 @@ void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravitySta
             xfactor = 0;
           }
           else{
-            xfactor = (nx - istart)/upscaling_factor_x;
+            xfactor = static_cast<double>(nx - istart)/static_cast<double>(upscaling_factor_x);
+            //x_local -= (1-xfactor)*dx_upscaled*0.5; // move effective cell center when cell contains padding
           }
 
           double yfactor = 1;
@@ -259,35 +274,44 @@ void ModelGravityDynamic::BuildGMatrix(ModelGravityStatic      * modelGravitySta
             yfactor = 0;
           }
           else{
-            yfactor = (ny - jstart)/upscaling_factor_y;
+            yfactor = static_cast<double>(ny - jstart)/static_cast<double>(upscaling_factor_y);
+            //y_local -= (1-yfactor)*dy_upscaled*0.5;// move effective cell center when cell contains padding
           }
-
-          localMass = (xfactor*dx_upscaled)*(yfactor*dy_upscaled)*dt_local*vp*0.5*1000; // units kg
-          localDistanceSquared = pow((x_local-x0),2) + pow((y_local-y0),2) + pow((z_local-z0),2); //units m^2
-
-          G_(i,J) = localMass/localDistanceSquared;
+          //double  localMass2 = (xfactor*dx_upscaled)*(yfactor*dy_upscaled)*(dt_local/1000*zfactor)*(vp*0.5); //m x m x s x (m/s) = m^3 gives  [units kg when multiplied with density kg/m^3 ]
+          localMass = (xfactor*dx_upscaled)*(yfactor*dy_upscaled)*(dz_local*zfactor);
+          //localDistanceSquared = (x_local-x0)*(x_local-x0) + (y_local-y0)*(y_local-y0) + (z_local-z0)*(z_local-z0); //units m^2
+          G_(i,J) = localMass/squaredDist;
           J++;
         }
       }
     }
+
     // Loop through full size simbox to get x, y, z for each grid cell
     for(int ii = 0; ii < nx; ii++){
       for(int jj = 0; jj < ny; jj++){
         for(int kk = 0; kk < nz; kk++){
           double x, y, z;
-          fullSizeTimeSimbox->getCoord(ii, jj, kk, x, y, z); // assuming these are center positions...
-          vp = meanAlphaFullSize->getRealValue(ii, jj, kk);
-          dt = fullSizeTimeSimbox->getdz(ii, jj);
-
-          localMass = dx*dy*dt*vp*0.5*1000; // units kg
+          fullSizeDepthSimbox->getCoord(ii, jj, kk, x, y, z); // assuming these are center positions...
+          //vp = meanAlphaFullSize->getRealValue(ii, jj, kk);
+          //dt = fullSizeTimeSimbox->getdz(ii, jj);
+          dz = fullSizeDepthSimbox->getdz(ii, jj);
+         // double localMass2 = dx*dy*(dt/1000)*(vp*0.5); // units kg
+          double localMass = dx*dy*(dz); // units kg
           localDistanceSquared = pow((x-x0),2) + pow((y-y0),2) + pow((z-z0),2); //units m^2
-
           G_fullsize_(i,I) = localMass/localDistanceSquared;
           I++;
         }
       }
     }
   }
-  G_ = G_*gamma;
-  G_fullsize_ = G_fullsize_*gamma;
+
+  // Units G is now [m= m^3/m^2 ] G*m has units [m*tonn/m^3 =1000 kg/m^2] // crava unit for density is   tonn/m^3 or g/ccm
+  // gamma has units: m^3/(kg*s^2)
+  //  G*m*gamma has units  [1000 kg/m^2 * m^3/(kg*s^2)  = 1000 m/s^2 ]
+  // we want  mikro gal as units
+
+  G_ = G_*(gamma*1000*1e8);
+  G_fullsize_ = G_fullsize_*(gamma*1000*1e8); // [1000 is tonn to kg]  1e8 is m/s^2  to mikro gal
+  NRLib::WriteMatrixToFile("G_fullsize.dat",G_fullsize_);
+  NRLib::WriteMatrixToFile("G_upscaled.dat",G_);
 }

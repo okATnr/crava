@@ -18,7 +18,7 @@ public:
   bool                          GetFailed()                const { return failed_                 ;}
   std::vector<bool>             GetFailedDetails()         const { return failed_details_         ;}
 
-  std::vector<float>            GetGravityResponse()       const { return gravity_response_       ;}
+  std::vector<float>            GetGravityResponse()       const { return gravity_initial_response_  ;}
   std::vector<float>            GetGravityStdDev()         const { return gravity_std_dev_        ;}
 
   FFTGrid *                     GetUpscalingKernel()       const { return upscaling_kernel_       ;}
@@ -27,19 +27,24 @@ public:
   int                           GetNx_upscaled()            const { return nx_upscaled_           ;}
   int                           GetNy_upscaled()            const { return ny_upscaled_           ;}
   int                           GetNz_upscaled()            const { return nz_upscaled_           ;}
+  int                           GetNData()                  const { return static_cast<int>(observation_location_utmx_.size());}
 
   int                           GetNxp_upscaled()           const { return nxp_upscaled_          ;}
   int                           GetNyp_upscaled()           const { return nyp_upscaled_          ;}
   int                           GetNzp_upscaled()           const { return nzp_upscaled_          ;}
 
+  int                           GetNxp()                    const { return nxp_          ;}
+  int                           GetNyp()                    const { return nyp_          ;}
+  int                           GetNzp()                    const { return nzp_          ;}
+
   double                        GetDx_upscaled()            const { return dx_upscaled_           ;}
   double                        GetDy_upscaled()            const { return dy_upscaled_           ;}
   double                        GetDz_upscaled()            const { return dz_upscaled_           ;}
 
+  void  computeBaseAdjustments(ModelGeneral *modelGeneral);
   // To be used by ModelGravityDynamic as well
   static void ReadGravityDataFile(const std::string   & fileName,
                                   const std::string   & readReason,
-                                  int                   nObs,
                                   int                   nColumns,
                                   std::vector <float> & obs_loc_utmx,
                                   std::vector <float> & obs_loc_utmy,
@@ -60,11 +65,17 @@ private:
 
   bool before_injection_start_;   ///< Incicator marking if this first vintage is before start of injection
 
-  std::vector<float> observation_location_utmx_;    ///< Vectors to store observation location coordinates
+  std::vector<float> observation_location_utmx_;          ///< Vectors to store observation location coordinates
   std::vector<float> observation_location_utmy_;
   std::vector<float> observation_location_depth_;
-  std::vector<float> gravity_response_;             ///< Vector to store base line gravity response
-  std::vector<float> gravity_std_dev_;              ///< Vector to store base line gravity standard deviation
+
+  std::vector<double> gravity_synt_initial_response_;      ///< Vector to store synthetic initial gravity response (Initial is time zero)
+  std::vector<double> gravity_synt_baseline_response_;     ///< Vector to store synthetic baseline gravity response (Baseline is first gravimetric measurement)
+
+  std::vector<float> gravity_baseline_response_;          ///< Vector to store base line gravity response
+  std::vector<float> gravity_initial_response_;           //   Approximated initial gravity response:   initial =  baseline - synt_baseline + synt_initial
+
+  std::vector<float> gravity_std_dev_;                    ///< Vector to store base line gravity standard deviation
 
   // This class holds upscaled grid quantities
   int       nx_upscaled_;             ///< Number of cells in each dimension for upscaled FFTGrids. Set equal to nxp_upscaled.
@@ -74,6 +85,10 @@ private:
   int       nxp_upscaled_;            ///< Number of cells -including padded region - in each dimension for upscaled FFTGrids
   int       nyp_upscaled_;
   int       nzp_upscaled_;
+
+  int       nxp_;            ///< Number of cells -including padded region - in each dimension for full FFTGrids
+  int       nyp_;
+  int       nzp_;
 
   double    dx_upscaled_;             ///< Coarse grid cell dimensions.
   double    dy_upscaled_;

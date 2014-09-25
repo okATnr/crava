@@ -66,27 +66,35 @@ ModelGravityStatic::ModelGravityStatic(ModelSettings        *& modelSettings,
     // Find first gravity data file
     std::string fileName = inputFiles->getGravimetricData(0);
 
-    int nObs = 30;     //user input
+
     int nColumns = 5;  // We require data files to have five columns
 
-    observation_location_utmx_.resize(nObs);
-    observation_location_utmy_.resize(nObs);
-    observation_location_depth_.resize(nObs);
-    gravity_response_.resize(nObs);
-    gravity_std_dev_.resize(nObs);
+    observation_location_utmx_.resize(1);
+    observation_location_utmy_.resize(1);
+    observation_location_depth_.resize(1);
+    gravity_baseline_response_.resize(1);
+    gravity_std_dev_.resize(1);
 
     ReadGravityDataFile(fileName, "gravimetric base survey",
-                        nObs, nColumns,
+                        nColumns,
                         observation_location_utmx_,
                         observation_location_utmy_,
                         observation_location_depth_,
-                        gravity_response_,
+                        gravity_baseline_response_,
                         gravity_std_dev_,
                         failedReadingFile,
                         errText);
     failedLoadingModel = failedReadingFile;
 
+    //computeAdjustmentOfResponce(gravity_synt_initial_response_,gravity_synt_baseline_response_,modelGeneral->getState4D());
+
+
     Simbox * fullTimeSimbox = modelGeneral->getTimeSimbox();
+    nxp_=modelSettings->getNXpad();
+    nyp_=modelSettings->getNYpad();
+    nzp_=modelSettings->getNZpad();
+
+
 
     x_upscaling_factor_ = modelSettings->getNXpad()/5 + 1;   // should be user input...
     y_upscaling_factor_ = modelSettings->getNYpad()/5 + 1;
@@ -96,7 +104,6 @@ ModelGravityStatic::ModelGravityStatic(ModelSettings        *& modelSettings,
 
     dx_upscaled_ = fullTimeSimbox->GetLX()/nx_upscaled_;
     dy_upscaled_ = fullTimeSimbox->GetLY()/ny_upscaled_;
-    dz_upscaled_ = fullTimeSimbox->GetLZ()/nz_upscaled_;
 
     LogKit::LogFormatted(LogKit::Low, "Generating smoothing kernel ...");
     MakeUpscalingKernel(modelSettings, fullTimeSimbox);
@@ -125,9 +132,62 @@ ModelGravityStatic::~ModelGravityStatic(void)
 }
 
 void
+ModelGravityStatic::computeBaseAdjustments(ModelGeneral *modelGeneral)
+{
+  LogKit::WriteHeader("Computing base adjustments to initial time for gravimetric data");
+  double gamma = 6.67384e-11; // units: m^3/(kg*s^2)
+  int nObs=static_cast<int>(gravity_baseline_response_.size());
+  gravity_synt_initial_response_.resize(nObs,0.0f);
+  gravity_synt_baseline_response_.resize(nObs,0.0f);
+  gravity_initial_response_.resize(nObs,0.0f);
+
+  State4D* state4D = modelGeneral->getState4D();
+  FFTGrid * rhoInitial = new FFTGrid( state4D->getMuRhoStatic() );
+  FFTGrid * rhoBase    = new FFTGrid( state4D->getMuRhoDynamic());
+  rhoInitial->invFFTInPlace();
+  rhoBase->invFFTInPlace();
+  rhoBase->add(rhoInitial);
+  rhoInitial->expTransf();
+  rhoBase->expTransf();
+
+  Simbox * fullSizeDepthSimbox = modelGeneral_->getDepthSimbox();
+  int nx = fullSizeDepthSimbox->getnx();
+  int ny = fullSizeDepthSimbox->getny();
+  int nz = fullSizeDepthSimbox->getnz();
+
+  double dx = fullSizeDepthSimbox->getdx();
+  double dy = fullSizeDepthSimbox->getdy();
+
+
+  for(int i = 0; i < nObs; i++){
+    double x0 = observation_location_utmx_[i];
+    double y0 = observation_location_utmy_[i];
+    double z0 = observation_location_depth_[i];
+    for(int ii = 0; ii < nx; ii++){
+      for(int jj = 0; jj < ny; jj++){
+        for(int kk = 0; kk < nz; kk++){
+          double x, y, z;
+          fullSizeDepthSimbox->getCoord(ii, jj, kk, x, y, z); // assuming these are center positions...
+
+          double dz = fullSizeDepthSimbox->getdz(ii, jj);
+          double rI=rhoInitial->getRealValue(ii,jj,kk);// units tonn/m^3 =1000 kg/m^3
+          double rB=rhoBase->getRealValue(ii,jj,kk);  // units tonn/m^3 =1000 kg/m^3
+          double localVolume = dx*dy*dz; // units m^3
+          double localDistanceSquared = (x-x0)*(x-x0) + (y-y0)*(y-y0) + (z-z0)*(z-z0); //units m^2
+          gravity_synt_initial_response_[i] +=  rI*localVolume/localDistanceSquared;
+          gravity_synt_baseline_response_[i] += rB*localVolume/localDistanceSquared;
+        }
+      }
+    }
+    gravity_synt_initial_response_[i]  *=gamma*1000*1e8;// [1000 is tonn to kg]  1e8 is m/s^2  to mikro gal
+    gravity_synt_baseline_response_[i] *=gamma*1000*1e8;// [1000 is tonn to kg]  1e8 is m/s^2  to mikro gal
+    gravity_initial_response_[i]        = static_cast<float>(gravity_synt_initial_response_[i]-gravity_synt_baseline_response_[i]+gravity_baseline_response_[i]);
+  }
+}
+
+void
 ModelGravityStatic::ReadGravityDataFile(const std::string   & fileName,
                                         const std::string   & readReason,
-                                        int                   nObs,
                                         int                   nColumns,
                                         std::vector <float> & obs_loc_utmx,
                                         std::vector <float> & obs_loc_utmy,
@@ -137,7 +197,8 @@ ModelGravityStatic::ReadGravityDataFile(const std::string   & fileName,
                                         bool                  failed,
                                         std::string         & errText)
 {
-  float * tmpRes = new float[nObs*nColumns+1];
+  int nObsMax=300;
+  float * tmpRes = new float[nObsMax*nColumns+1];
   std::ifstream inFile;
   NRLib::OpenRead(inFile,fileName);
   std::string text = "Reading "+readReason+" from file "+fileName+" ... ";
@@ -145,9 +206,10 @@ ModelGravityStatic::ReadGravityDataFile(const std::string   & fileName,
   std::string storage;
   int index = 0;
   failed = false;
+  int line_num = 1;
 
-  while(failed == false && inFile >> storage) {
-    if(index < nObs*nColumns) {
+  while(failed == false && (NRLib::CheckEndOfFile(inFile)==false)) {
+      NRLib::ReadNextToken(inFile ,storage, line_num);
       try {
         tmpRes[index] = NRLib::ParseType<float>(storage);
       }
@@ -156,18 +218,24 @@ ModelGravityStatic::ReadGravityDataFile(const std::string   & fileName,
         errText += e.what();
         failed = true;
       }
-    }
     index++;
   }
+   int nObs = index/nColumns; // integer division
+
   if(failed == false) {
     if(index != nObs*nColumns) {
       failed = true;
-      errText += "Found "+NRLib::ToString(index)+" in file "+fileName+", expected "+NRLib::ToString(nObs*nColumns)+".\n";
+      errText += "Found "+NRLib::ToString(index)+" numbers in file "+fileName+", expected "+NRLib::ToString(nObs*nColumns)+".\n";
     }
   }
 
   if(failed == false) {
     LogKit::LogFormatted(LogKit::Low,"ok.\n");
+    obs_loc_utmx.resize(nObs);
+    obs_loc_utmy.resize(nObs);
+    obs_loc_depth.resize(nObs);
+    gravity_response.resize(nObs);
+    gravity_std_dev.resize(nObs);
     index = 0;
     for(int i=0;i<nObs;i++) {
       obs_loc_utmx[i] = tmpRes[index];
@@ -190,7 +258,7 @@ ModelGravityStatic::ReadGravityDataFile(const std::string   & fileName,
 
 void
 ModelGravityStatic::MakeUpscalingKernel(ModelSettings * modelSettings, Simbox * fullTimeSimbox)
-{
+{ //
   int nx = fullTimeSimbox->getnx();
   int ny = fullTimeSimbox->getny();
   int nz = fullTimeSimbox->getnz();
@@ -200,19 +268,20 @@ ModelGravityStatic::MakeUpscalingKernel(ModelSettings * modelSettings, Simbox * 
   int nzp = modelSettings->getNZpad();
 
   upscaling_kernel_ = new FFTGrid(nx, ny, nz, nxp, nyp, nzp);
-  upscaling_kernel_->setType(FFTGrid::PARAMETER);
+  upscaling_kernel_->setType(FFTGrid::OPERATOR);
   upscaling_kernel_->fillInConstant(0.0);
 
   upscaling_kernel_->setAccessMode(FFTGrid::RANDOMACCESS);
 
-  for(int k = 0; k < nz_upscaled_; k++)
-    for(int j = 0; j < ny_upscaled_; j++)
-      for(int i = 0; i < nx_upscaled_; i++)
-        upscaling_kernel_->setRealValue(i, j, k, 1.0);
+  for(int k = 0; k < nzp/nz_upscaled_; k++)
+    for(int j = 0; j < nyp/ny_upscaled_; j++)
+      for(int i = 0; i < nxp/nx_upscaled_; i++)
+        upscaling_kernel_->setRealValue(i, j, k, 1.0,true);
 
   upscaling_kernel_->endAccess();
 
   upscaling_kernel_->multiplyByScalar(static_cast<float>(nxp_upscaled_*nyp_upscaled_*nzp_upscaled_)/static_cast<float>(nxp*nyp*nzp));
+  upscaling_kernel_->fftInPlace();
 }
 
 void ModelGravityStatic::MakeLagIndex(int nx_upscaled, int ny_upscaled, int nz_upscaled)
