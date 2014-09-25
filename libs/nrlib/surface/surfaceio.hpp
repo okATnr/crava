@@ -331,16 +331,16 @@ void  NRLib::ReadSgriSurf(const std::string & filename,
       throw Exception("Error: Grid sampling in Y-dir must be > 0.0.\n");
     }
 
-    double lx = nx*dx;
-    double ly = ny*dy;
+    double lx =  nx*dx; // NBNB OK not clear definition  should be lx=(nx-1)*dx; ???
+    double ly =  ny*dy; // NBNB OK not clear definition  should be ly=(ny-1)*dx; ???
 
-    double x_min = min_values[0]-0.5*dx; //In regular grid, these are at value;
-    double y_min = min_values[1]-0.5*dy; //in sgri, at corner of cell, hence move.
+    double x_min = min_values[0]-0.5*dx; //In regular grid, these are at value; NBNB OK not clear definition
+    double y_min = min_values[1]-0.5*dy; //in sgri, at corner of cell, hence move. NBNB OK not clear definition
 
     header_file >> angle;
 
     surface.Resize(nx, ny, 0.0);
-    surface.SetDimensions(x_min, y_min, lx, ly);
+    surface.SetDimensions(x_min, y_min, lx, ly);//NBNB OK interpretation of sgri 2D  not clear definition
 
     getline(header_file, tmp_str);
     //Reading record 10+dim+ngrid: Undef value
