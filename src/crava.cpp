@@ -372,9 +372,9 @@ Crava::~Crava()
   delete [] errorVariance_;
   delete [] dataVariance_;
 
-  delete postAlpha_;
-  delete postBeta_;
-  delete postRho_;
+//  delete postAlpha_;
+//  delete postBeta_;
+//  delete postRho_;
 
   if(fprob_ != NULL)
     delete fprob_;
