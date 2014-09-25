@@ -85,8 +85,8 @@ ModelTravelTimeStatic::processHorizons(const ModelSettings  * modelSettings,
   const std::vector<std::string> & initial_horizons = inputFiles->getTravelTimeHorizons(0);
 
   int n_horizons = static_cast<int>(initial_horizons.size());
-
-  if (n_horizons > 0) {
+  bool first_is_not_dummy_horizon = (initial_horizons[0].size()>0);
+  if ((n_horizons > 0)  && first_is_not_dummy_horizon) {
 
     LogKit::LogFormatted(LogKit::Low, "\nReading horizon travel time data:\n");
 

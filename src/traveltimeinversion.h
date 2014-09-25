@@ -187,7 +187,7 @@ private:
 
   NRLib::Grid2D<double>         generateSigmaModel(const std::vector<double> & cov_grid) const;
 
-  std::vector<double>           getCov(FFTGrid * cov) const;
+  std::vector<double>           getVerticalCov(FFTGrid * cov) const;
 
   void                          transformVpSquareToLogVp(const std::vector<double>   & mu_vp_square,
                                                          const NRLib::Grid2D<double> & Sigma_vp_square,
@@ -351,7 +351,7 @@ private:
                                                     FFTGrid * cov_pow_model,
                                                     double power) const;
 
- void                           transformLogToPower(FFTGrid *  mu_pow_model,
+ void                          transformLogToPower(FFTGrid *  mu_pow_model,
                                                     FFTGrid *  cov_pow_model,
                                                     FFTGrid *  mu_log_model,
                                                     FFTGrid *  cov_log_model,
@@ -363,12 +363,12 @@ private:
                                                   Simbox                    *& new_simbox,
                                                   std::string                & errTxt) const;
 
-  void                          generateResampleGrid(const NRLib::Grid<double> & v2v1,
+  bool                          generateResampleGrid(const NRLib::Grid<double> & v2v1,
                                                      const Simbox              * old_simbox,
                                                      const Simbox              * new_simbox,
                                                      NRLib::Grid<double>       & resample_grid) const;
 
-  FFTGrid *                    generateResampleAveragePreserve( FFTGrid        * v2v0_1,          //  v2v0  contains Vp_2(t1)/Vp_0(t1)    in the previous timeframe (t1)
+  FFTGrid *                     generateResampleAveragePreserve( FFTGrid        * v2v0_1,          //  v2v0  contains Vp_2(t1)/Vp_0(t1)    in the previous timeframe (t1)
                                                           const FFTGrid        * v1v0_1,          //  v1v0_1  contains Vp_1(t1)/Vp_0(t1)  in the previous timeframe (t1)
                                                           const Simbox         * simbox1,         //  simbox in the previous timeframe (t1)
                                                           const Simbox         * simbox2) const;  //  simbox in the current timeframe (t2)
