@@ -6213,7 +6213,7 @@ XmlModelFile::checkInversionConsistency(std::string & errTxt) {
       errTxt += "<rms-velocities> need to be given in <prior-model> when RMS data are given in <survey><travel-time>\n";
 
     std::vector<std::string> firstTravelTimeHorizons = modelSettings_->getTimeLapseTravelTimeHorizons(0);
-    if (firstTravelTimeHorizons.size() > 0) {
+    if (firstTravelTimeHorizons[0].size() > 0) {
       for (int i = 1; i < static_cast<int>(modelSettings_->getNumberOfTimeLapses()); ++i) {
         std::vector<std::string> currentTravelTimeHorizons = modelSettings_->getTimeLapseTravelTimeHorizons(i);
         for (size_t j = 0; j < currentTravelTimeHorizons.size(); ++j) {
