@@ -188,36 +188,33 @@ ModelGeneral::ModelGeneral(ModelSettings           *& modelSettings,
 
         //Set up timeline.
         timeLine_ = new TimeLine();
-        //Activate below when gravity data are ready.
-        //Do gravity first.
-        //for(int i=0;i<modelSettings->getNumberOfGravityData();i++) {
-        //  int time = computeTime(modelSettings->getGravityYear[i],
-        //                         modelSettings->getGravityMonth[i],
-        //                         modelSettings->getGravityDay[i]);
-        //  timeLine_->AddEvent(time, TimeLine::GRAVITY, i);
-
+   
+       
         bool firstGravimetricEvent = true;
         for(int i=0;i<modelSettings->getNumberOfVintages();i++) {
-          //Vintages may have both travel time and AVO
+          //Vintages may have both gravimetric travel time and AVO
           int time = computeTime(modelSettings->getVintageYear(i),
                                  modelSettings->getVintageMonth(i),
                                  modelSettings->getVintageDay(i));
-           // Do gravity first
-           if(modelSettings->getGravityTimeLapse(i)){
-             if(firstGravimetricEvent){
-               // Do not save first gravity event in timeline
-               firstGravimetricEvent = false;
-             }
-             else{
-               timeLine_->AddEvent(time, TimeLine::GRAVITY, i);
-             }
-          }
+           
           //Travel time before AVO for same vintage.
           if(modelSettings->getTravelTimeTimeLapse(i) == true)
             timeLine_->AddEvent(time, TimeLine::TRAVEL_TIME, i);
 
           if(modelSettings->getNumberOfAngles(i) > 0) //Check for AVO data, could be pure travel time.
             timeLine_->AddEvent(time, TimeLine::AVO, i);
+          
+          // Do gravity last
+           if(modelSettings->getGravityTimeLapse(i)){
+             if(firstGravimetricEvent){
+               // Do not save first gravity event in timeline
+               firstGravimetricEvent = false;
+                timeLine_->AddEvent(time, TimeLine::GRAVITYFIRST, i);
+             }
+             else{
+               timeLine_->AddEvent(time, TimeLine::GRAVITY, i);
+             }
+          }
         }
 
         if(modelSettings->getDo4DInversion() && failedRockPhysics == false){
@@ -296,6 +293,12 @@ ModelGeneral::~ModelGeneral(void)
   if(priorCorrXY_ != NULL)
     delete priorCorrXY_;
 
+}
+
+Simbox * 
+ModelGeneral::getDepthSimbox()           const 
+{ 
+  return timeDepthMapping_->getSimbox();
 }
 
 void
@@ -4914,6 +4917,8 @@ ModelGeneral::setTimeDepthMapping(GridMapping * new_timeDepthMapping)
   timeDepthMapping_ = new_timeDepthMapping;
 }
 
+
+
 void
 ModelGeneral::mergeState4D(SeismicParametersHolder &  seismicParameters)
 {
@@ -5036,7 +5041,15 @@ ModelGeneral::dump4Dparameters(const ModelSettings* modelSettings, std::string i
   std::string fileName;
   std::stringstream tag;
 
-  if(timestep<0)
+  if(timestep>=0)
+  {
+  char* timeString;          //En liten minne hilsen fra Odd :-)
+  timeString =new char(100); //
+  sprintf( timeString,"_%d",timestep) ;
+  std::string topSurf  = IO::PrefixSurface() + IO::PrefixTop()  + IO::PrefixTime() +"_step_" +timeString+ identifyer;
+  std::string baseSurf = IO::PrefixSurface() + IO::PrefixBase() + IO::PrefixTime() +"_step_" +timeString+ identifyer;
+  timeSimbox_->writeTopBotGrids(topSurf, baseSurf,IO::PathToInversionResults(), modelSettings->getOutputGridFormat());
+                                    
 
   // write mu static
   tag.str(std::string());tag.clear();label = "mean_vp_static_step_"; tag << label << timestep << identifyer ; fileName= outPath + tag.str();
@@ -5108,6 +5121,8 @@ ModelGeneral::dump4Dparameters(const ModelSettings* modelSettings, std::string i
   tag.str(std::string());tag.clear();label = "cov_rho_rho_static_dynamic_step_"; tag << label << timestep << identifyer ; fileName= outPath + tag.str();
   ParameterOutput::writeToFile(timeSimbox_,this, modelSettings, state4d_.getCovRhoRhoStaticDynamic() , fileName,  tag.str(),true);
    // */
+  }
+
   state4d_.FFT();
 }
 
@@ -5149,4 +5164,3 @@ ModelGeneral::makeCorr2DPositiveDefinite(Surface         * corrXY)
     for(int j =0;j<nyp;j++)
        (*corrXY)(i+j*nxp)=helper.getRealValue(i,j,0)*scale;
 }
-

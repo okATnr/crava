@@ -48,6 +48,7 @@ public:
 
   Simbox                   * getTimeSimbox()            const { return timeSimbox_             ;}
   Simbox                   * getTimeSimboxConstThick()  const { return timeSimboxConstThick_   ;}
+  Simbox                   * getDepthSimbox()           const;
   RandomGen                * getRandomGen()             const { return randomGen_              ;}
   GridMapping              * getTimeDepthMapping()      const { return timeDepthMapping_       ;}
   GridMapping              * getTimeCutMapping()        const { return timeCutMapping_         ;}
