@@ -155,6 +155,7 @@ public:
   virtual int          expTransf();                             // No mode/randomaccess
   virtual int          logTransf();                             // No mode/randomaccess
   virtual void         realAbs();
+  virtual void         abs();
   virtual int          collapseAndAdd(float* grid);             // No mode/randomaccess
   virtual void         fftInPlace();                            // No mode/randomaccess
   virtual void         invFFTInPlace();                         // No mode/randomaccess
@@ -189,7 +190,7 @@ public:
   //For use when writing to a grid that may be in the wrong state.
   void                 setTransformedStatus(bool status) {istransformed_ = status;}
 
-  enum                 gridTypes{CTMISSING, DATA, PARAMETER, COVARIANCE, VELOCITY};
+  enum                 gridTypes{CTMISSING, DATA, PARAMETER, COVARIANCE, VELOCITY,OPERATOR};
   enum                 accessMode{NONE, READ, WRITE, READANDWRITE, RANDOMACCESS};
 
   virtual void         multiplyByScalar(float scalar);      //No mode/randomaccess

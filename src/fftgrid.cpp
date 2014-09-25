@@ -1533,8 +1533,8 @@ FFTGrid::getComplexValue(int i, int j, int k, bool extSimbox) const
   fftw_complex value;
 
   assert(istransformed_==true);
-
-  bool  inSimbox   = (extSimbox ? ( (i < nxp_) && (j < nyp_) && (k < nzp_)):
+  // OK Simbox   is meaning less in fourier dommain
+  bool  inSimbox   = (extSimbox ? ( (i < cnxp_) && (j < nyp_) && (k < nzp_)):
     ((i < nx_) && (j < ny_) && (k < nz_)));
   bool  notMissing = ( (i > -1) && (j > -1) && (k > -1));
 
@@ -1667,8 +1667,8 @@ int
 FFTGrid::setComplexValue(int i, int j ,int k, fftw_complex value, bool extSimbox)
 {
   assert(istransformed_== true);
-
-  bool  inSimbox   = (extSimbox ? ( (i < nxp_) && (j < nyp_) && (k < nzp_)):
+  // OK Simbox   is meaning less in fourier dommain
+  bool  inSimbox   = (extSimbox ? ( (i < cnxp_) && (j < nyp_) && (k < nzp_)):
     ((i < nx_) && (j < ny_) && (k < nz_)));
   bool  notMissing = ( (i > -1) && (j > -1) && (k > -1));
 
@@ -1793,7 +1793,7 @@ FFTGrid::fftInPlace()
   assert(istransformed_==false);
   assert(cubetype_!= CTMISSING);
 
-  if( cubetype_!= COVARIANCE )
+  if( cubetype_!= COVARIANCE &&  cubetype_!=OPERATOR  )
     FFTGrid::multiplyByScalar(1.0f/sqrt(static_cast<float>(nxp_*nyp_*nzp_)));
 
   int flag;
@@ -1824,7 +1824,7 @@ FFTGrid::invFFTInPlace()
   float scale;
   int flag;
   rfftwnd_plan plan;
-  if(cubetype_==COVARIANCE)
+  if(cubetype_==COVARIANCE || cubetype_==OPERATOR)
     scale=float( 1.0/(nxp_*nyp_*nzp_));
   else
     scale=float( 1.0/sqrt(float(nxp_*nyp_*nzp_)));
@@ -1851,6 +1851,20 @@ FFTGrid::realAbs()
     cvalue_[i].im = 0.0;
   }
 }
+
+
+void
+FFTGrid::abs()
+{
+  assert(istransformed_==true);
+  int i;
+  for(i=0;i<csize_;i++)
+  {
+    cvalue_[i].re = float (  sqrt( cvalue_[i].re * cvalue_[i].re +cvalue_[i].im * cvalue_[i].im) );
+    cvalue_[i].im = 0.0;
+  }
+}
+
 
 void
 FFTGrid::add(FFTGrid* fftGrid)
@@ -1970,7 +1984,10 @@ FFTGrid::conjugate()
 void
 FFTGrid::multiplyByScalar(float scalar)
 {
-  assert(istransformed_==false);
+  //assert(istransformed_==false);
+  //NBNB OK this assertion is not needed if the signal is complex
+  // then both real and complex part should multiplied with same number
+  // since rvalue_ and cvalue_ points to same array this will work either way.
   for(int i=0;i<rsize_;i++)
   {
     rvalue_[i]*=scalar;
