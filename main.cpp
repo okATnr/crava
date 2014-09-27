@@ -184,7 +184,7 @@ int main(int argc, char** argv)
     ModelAVOStatic        * modelAVOstatic        = NULL;
     ModelTravelTimeStatic * modelTravelTimeStatic = NULL;
     ModelGravityStatic    * modelGravityStatic    = NULL;
-    NRLib::Random::Initialize();
+    NRLib::Random::Initialize(231171);
 
     if (modelFile.getParsingFailed()) {
       LogKit::SetFileLog(IO::FileLog()+IO::SuffixTextFiles(), modelSettings->getLogLevel());

@@ -133,4 +133,4 @@ int RandomGen::writeSeedFile(const std::string & filename) const
   return(error);
 }
 
-unsigned int RandomGen::seed_ = 23665; //Default seed
+unsigned int RandomGen::seed_ = 231171; //Default seed

@@ -5046,10 +5046,12 @@ ModelGeneral::dump4Dparameters(const ModelSettings* modelSettings, std::string i
   char* timeString;          //En liten minne hilsen fra Odd :-)
   timeString =new char(100); //
   sprintf( timeString,"_%d",timestep) ;
-  std::string topSurf  = IO::PrefixSurface() + IO::PrefixTop()  + IO::PrefixTime() +"_step_" +timeString+ identifyer;
-  std::string baseSurf = IO::PrefixSurface() + IO::PrefixBase() + IO::PrefixTime() +"_step_" +timeString+ identifyer;
+  std::string topSurf  = IO::PrefixSurface() + IO::PrefixTop()  + IO::PrefixTime() +"_step" +timeString+ identifyer;
+  std::string baseSurf = IO::PrefixSurface() + IO::PrefixBase() + IO::PrefixTime() +"_step" +timeString+ identifyer;
   timeSimbox_->writeTopBotGrids(topSurf, baseSurf,IO::PathToInversionResults(), modelSettings->getOutputGridFormat());
 
+  tag.str(std::string());tag.clear();label = "relative_velocity_step_"; tag << label << timestep << identifyer ; fileName= outPath + tag.str();
+  ParameterOutput::writeToFile(timeSimbox_,this, modelSettings, state4d_.getRelativeVelocity(), fileName,  tag.str(),printPadding);
 
   // write mu static
   tag.str(std::string());tag.clear();label = "mean_vp_static_step_"; tag << label << timestep << identifyer ; fileName= outPath + tag.str();

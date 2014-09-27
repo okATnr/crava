@@ -45,22 +45,22 @@ TravelTimeInversion::TravelTimeInversion(ModelGeneral            * modelGeneral,
     modelGeneral->mergeState4D(seismicParameters);
     seismicParameters.invFFTAllGrids();
     if(modelSettings->getDebugLevel()> 0)
-      modelGeneral->dumpSeismicParameters(modelSettings,"_AfterHorizonInversion",vintage, seismicParameters);
+      modelGeneral->dumpSeismicParameters(modelSettings,"_AfterPushDown",vintage, seismicParameters);
     if(modelSettings->getDebugLevel()> 0)
-      modelGeneral->dump4Dparameters(modelSettings,"_AfterHorizonInversion",vintage,true);
+      modelGeneral->dump4Dparameters(modelSettings,"_AfterPushDown",vintage,true);
   }
 
 
 
   if (rms_data_given == true){
-     doRMSInversionAlt(modelGeneral,
+     doRMSInversion(modelGeneral,
                      modelTravelTimeStatic,
                      modelTravelTimeDynamic,
                      seismicParameters);
    if(modelSettings->getDebugLevel()> 0)
-      modelGeneral->dumpSeismicParameters(modelSettings,"_AfterRMSInversion",vintage, seismicParameters);
+      modelGeneral->dumpSeismicParameters(modelSettings,"_AfterRMS",vintage, seismicParameters);
     if(modelSettings->getDebugLevel()> 0)
-      modelGeneral->dump4Dparameters(modelSettings,"_AfterRMSInversion",vintage,true);
+      modelGeneral->dump4Dparameters(modelSettings,"_AfterRMS",vintage,true);
   }
 
   time(&time_end);
